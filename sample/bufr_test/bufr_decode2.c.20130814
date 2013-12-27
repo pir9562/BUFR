@@ -1,0 +1,344 @@
+/**
+* Copyright 2005-2007 ECMWF
+* 
+* Licensed under the Apache License, Version 2.0 (the "License"); you may
+* not use this file except in compliance with the License. You may obtain a
+* copy of the License at http://www.apache.org/licenses/LICENSE-2.0 Unless
+* required by applicable law or agreed to in writing, software distributed
+* under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES
+* OR CONDITIONS OF ANY KIND, either express or implied. See the License
+* for the specific language governing permissions and limitations under
+* the License.
+*/
+
+/*     ------------------------------       */  
+/*     Read and expand a bufr message       */
+/*     ------------------------------       */  
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+
+#define KVALS 4096000
+#define KELEM 160000
+
+
+#define RMISS 32768.0
+
+int main(int argc, char *argv[])
+{
+  long int ksec0[3];
+  long int ksec1[40];
+  long int* ksec2;//[4096];
+  long int ksec3[4]; 
+  long int ksec4[2];
+
+//  char *cvals;
+  char** cvals;//[KVALS][80];
+
+  //char *cnames;
+    static char** cnames;
+//  char *cunits;
+    static char** cunits;//[KELEM][24];
+  double *values;
+  char *cboxn;
+  char *cboxu;
+  double *vals;
+  
+  
+  long int key[46];
+  long int ksup[9];
+
+  long *ktdlst;
+  long *ktdexp;
+  long ktdlen,ktdexl;
+  int kapp;
+  long int klen;
+  int kbox;
+  long kelem = KELEM,kvals = KVALS;
+  long int length;
+  
+  int *all_kbox;
+  int *all_kapp;
+  long int *all_klen;
+  double *all_vals;
+  char *all_cboxn;
+
+  //const char *fname   = (*env)->GetStringUTFChars(env, filename, 0); 
+  char* filename;//[256];
+
+  FILE *fp; 
+  int fout=3;
+  char *bufr_message;
+
+  long int status=0;
+  int  Nbpw;
+
+  unsigned long int *kbuff;
+  long int kerr=0;
+  
+  long int *kboxr;
+  long int kpmiss=1;
+  long int kprus=1;
+  long int nokey=0;
+  int kreq[2];
+  int krql=1;
+  int krq[krql];
+  float rqv[krql];
+  int arrsz=0;
+  int lastsz=0;
+  
+
+	int bitmap_flag=1;
+ 
+  int i;
+  int ik;
+  int ii;
+  int il;
+  
+  int found;
+  int req_index;
+  int h;
+
+  int itemp=0;
+  int itemp2=0;
+
+  long icode = 0;
+  length=2000000;
+  
+
+  filename = (char*)malloc(sizeof(char)*256);
+  ksec2 = (long int*)malloc(sizeof(long int)*4096);
+
+//     cvals = (char *) calloc(KVALS*80,sizeof(char));
+	cvals = (char **)malloc(KVALS * sizeof(char *));
+	for (i = 0; i < KVALS; i++) {
+		cvals[i] = (char *)malloc(80 * sizeof(char));
+		memset(cvals[i], 0x00,  sizeof(char)*80);
+	}
+//     cnames = (char *) calloc(KELEM*64,sizeof(char));
+	cnames = (char **)malloc(KELEM * sizeof(char *));
+	for (i = 0; i < KELEM; i++) {
+		cnames[i] = (char *)malloc(64 * sizeof(char));
+		memset(cnames[i], 0x00, sizeof(char)*64);
+	}
+//     cunits= (char *) calloc(KELEM*24,sizeof(char));
+	cunits = (char **)malloc(KELEM * sizeof(char *));
+	for (i = 0; i < KELEM; i++) {
+		cunits[i] = (char *)malloc(24 * sizeof(char));
+		memset(cunits[i], 0x00, sizeof(char)*24);
+	}
+	values= (double *) calloc(KVALS,sizeof(double));
+	ktdlst = (long *) calloc(KELEM,sizeof(long));
+	ktdexp = (long *) calloc(KELEM,sizeof(long));
+       
+	memset(filename, 0x00, sizeof(filename));
+	memset(ksec2, 0x00, sizeof(ksec2));
+
+       
+       
+  if(sizeof(long) == 4) Nbpw=32;
+  else if(sizeof(long) == 8) Nbpw=64;
+  else{
+    printf("Abort.....\n");
+  }
+
+/*     Get input and output file name.  */
+/*     -------------------------------  */  
+
+  if(argc != 3) {
+    printf("Usage: bufr_decode -i infile \n");
+    printf("Please try again. \n");
+    exit(1);
+  }
+
+  printf("%d",argc);
+
+  if(!strcmp(argv[1],"-i")) strcpy(filename,argv[2]);
+  else {
+    printf("Usage: bufr_decode -i infile \n");
+    exit(1);
+  }
+  printf("%s\n", filename);
+
+/*     Open input file       */
+/*     ---------------       */  
+
+  if((fp = fopen(filename,"r")) == NULL) {
+    printf("cannot open file\n");
+    exit(1);
+  }
+  
+/*     Read in bufr messages */
+/*     --------------------- */ 
+
+  //fseek(fp,offset,SEEK_SET);
+  
+  kreq[0]=0;
+  kreq[1]=0;
+  krql=1;
+  krq[0]=1;
+  rqv[0]=0.0;
+  busrq_(kreq,&krql,krq,rqv,&kerr);
+     
+  buprq_(&kpmiss,&kprus,&nokey);
+  length=512000;
+  bufr_message=(char *) calloc(length,sizeof(char));
+  status = readbufr( fp,bufr_message,&length);
+
+  all_kbox = malloc(1);
+  all_kapp = malloc(1);
+  all_klen = malloc(1);
+  all_vals = malloc(1);
+  all_cboxn= malloc(1);
+  if(     status == -1 ) printf("End of file.\n");
+  else if(status == -2 ) printf("Error in file handling\n");
+  else if(status == -3 ) printf("Too small input array.\n");
+  else if(status == -4 ) printf("Too small input array.\n");
+  else {
+
+/*    Expand bufr message calling fortran program */
+      kbuff = (long *) bufr_message;
+      length /= 4;
+			//length = length/(Nbpw/8)+1;
+
+//      bus012_(&length, kbuff , ksup, ksec0, ksec1, ksec2,  &kerr) ;
+    	bus0123_(&length, kbuff , ksup, ksec0, ksec1, ksec2, ksec3,  &kerr) ;
+			printf("ksec3 %x,%x,%x,%x\n", ksec3[0],ksec3[1],ksec3[2],ksec3[3]);
+  	  printf("ksec1 %x,%x,%x,%x,%x,%x,%x,%x,%x,%x\n", ksec1[0],ksec1[1],ksec1[2],ksec1[3],ksec1[4],ksec1[5],ksec1[6],ksec1[7],ksec1[8],ksec1[9]);
+		  printf("ksup:%x,%x,%x,%x,%x,%x,%x,%x,%x\n",ksup[0],ksup[1],ksup[2],ksup[3],ksup[4],ksup[5],ksup[6],ksup[7],ksup[8]);
+
+			itemp = ksec3[1];
+      if (itemp > 1){
+        kelem = kvals/itemp;
+        printf("kelem %d, kvals %d\n", kelem, kvals);
+      }
+      else
+        kelem = KELEM;
+	
+      free(all_kbox);
+      free(all_kapp);
+      free(all_klen);
+      free(all_vals);
+      free(all_cboxn);
+
+      all_kbox = (int *) calloc(ksec3[1],sizeof(int));
+      all_kapp = (int *) calloc(ksec3[1],sizeof(int));
+      all_klen = (long int *) calloc(ksec3[1],sizeof(long int));
+      all_vals = (double *) calloc(KVALS,sizeof(double));
+      all_cboxn= (char *) calloc(KVALS*64,sizeof(char));
+	
+
+      if ( kelem > KELEM ) kelem = KELEM;
+      	
+      printf("kelem %d\n", kelem);
+      bufrex_(&length,(long int *)kbuff,ksup,ksec0,ksec1,ksec2,ksec3,ksec4,
+              &kelem,(char **)cnames,(char **)cunits,&kvals,
+              values,(char **)cvals,&kerr);
+			printf("ksec4 %x,%x,%x,%x\n", &ksec4[0],&ksec4[1],ksec4[0],ksec4[1]);
+			printf("ksec3 %d,%d,%x,%x\n", &ksec3[0],&ksec3[1],&ksec3[2],&ksec3[3]);
+  	  printf("ksec1 %x,%x,%x,%x,%x,%x,%x,%x,%x,%x\n", ksec1[0],ksec1[1],ksec1[2],ksec1[3],ksec1[4],ksec1[5],ksec1[6],ksec1[7],ksec1[8],ksec1[9]);
+		  printf("ksup:%x,%x,%x,%x,%x,%x,%x,%x,%x\n",ksup[0],ksup[1],ksup[2],ksup[3],ksup[4],ksup[5],ksup[6],ksup[7],ksup[8]);
+	      
+      if ( kerr )
+      {
+        kerr = 0;
+      }
+
+	    /* print section 0 */
+	    buprs0_(ksec0);
+    
+	    /* print section 1 */
+	    buprs1_(ksec1);
+    
+			/* print section 2 */
+	    buukey_(ksec1,ksec2,key,ksup,&kerr);
+//    printf("buukey_ %d\n", kerr);
+	    buprs2_(ksup,key);
+
+
+//      buukey_(ksec1,ksec2,key,ksup,&kerr);
+		/* print section 3 */
+//    busel_(&ktdlen,ktdlst,&ktdexl,ktdexp,&kerr);
+//-    isubset = 1;
+//-    busel2_(&isubset,&kelem, &ktdlen, ktdlst, &ktdexl, ktdexp, (char **)cnames, (char **)cunits, &kerr);
+//		printf(">>>>>>>>>>>>>>>>>>>ksec3:%d,%d,%d,%d\n",ksec3[0],ksec3[1],ksec3[2],ksec3[3]);
+//		printf("ksup:%d,%d,%d,%d,%d,%d,%d,%d,%d\n",ksup[0],ksup[1],ksup[2],ksup[3],ksup[4],ksup[5],ksup[6],ksup[7],ksup[8]);
+//-    buprs3_(ksec3,&ktdlen,ktdlst,&ktdexl,ktdexp,&kelem,(char **)cnames);
+      
+
+      ik=1;
+      busel2_(&ik,&kelem,&ktdlen,ktdlst,&ktdexl,ktdexp,(char **)cnames, (char**)cunits,&kerr);
+
+	    buprs3_(ksec3,&ktdlen,ktdlst,&ktdexl,ktdexp,&kelem,(char **)cnames);
+
+	
+			printf("ksec3 %x,%x,%x,%x\n", ksec3[0],ksec3[1],ksec3[2],ksec3[3]);
+  	  printf("ksec1 %x,%x,%x,%x,%x,%x,%x,%x,%x,%x\n", ksec1[0],ksec1[1],ksec1[2],ksec1[3],ksec1[4],ksec1[5],ksec1[6],ksec1[7],ksec1[8],ksec1[9]);
+		  printf("ksup:%x,%x,%x,%x,%x,%x,%x,%x,%x\n",ksup[0],ksup[1],ksup[2],ksup[3],ksup[4],ksup[5],ksup[6],ksup[7],ksup[8]);
+			itemp = ksec3[1];
+			printf(">>>>>>>>>>%d\n",itemp);
+
+      for (ik=1;ik<itemp+1;ik++){
+	       //printf("for %d\n", ik);
+	       // call busel2 for each subset if not compressed 
+	       itemp2=128;
+ 	       if(ik>1 && (itemp2==64 || itemp2==192))
+ 	       	{
+	      	 busel2_(&ik,&kelem,&ktdlen,ktdlst,&ktdexl,ktdexp,(char **)cnames,(char**)cunits,&kerr);
+	      	 printf("ksec3 %x,%x,%x,%x\n", ksec3[0],ksec3[1],ksec3[2],ksec3[3]);
+	      	 printf("ksec1 %d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", ksec1[0],ksec1[1],ksec1[2],ksec1[3],ksec1[4],ksec1[5],ksec1[6],ksec1[7],ksec1[8],ksec1[9]);
+					 printf("ksup:%x,%x,%x,%x,%x,%x,%x,%x,%x\n",ksup[0],ksup[1],ksup[2],ksup[3],ksup[4],ksup[5],ksup[6],ksup[7],ksup[8]);
+	      	}
+	      	 
+	       if(bitmap_flag==1)
+	       {  
+	         cboxn= (char *) malloc(KELEM*64*sizeof(char));
+	         cboxu= (char *) malloc(KELEM*24*sizeof(char));
+	         kboxr = (long int *) malloc(KVALS*sizeof(long int));
+	         vals = (double *) malloc(KVALS*sizeof(double));
+	         
+				   bubox_(&ik,ksup,&kelem,ktdexp,(char **)cnames,
+								   (char**)cunits,&kvals,values,&kbox,&kapp,&klen,
+								   kboxr,vals,(char**)cboxn,(char**)cboxu,&kerr);
+					 //CALL BUPRTBOX(KBOX,KAPP,KLEN,KBOXR,VALS,CBOXN,CBOXU)
+					 buprtbox_(&kbox,&kapp,&klen,kboxr,vals,(char**)cboxn,(char**)cboxu);
+/*	
+				   all_kbox[ik-1]=kbox;
+				   all_kapp[ik-1]=kapp;
+				   all_klen[ik-1]=klen;
+				   arrsz=arrsz+kapp*kbox;
+				   for (il=0;il<kbox;il++){
+				     for (ii=1;ii<kapp+1;ii++){
+				       all_vals[(ik-1)*(lastsz)+(((ii-1)*kbox)+(il))]=vals[il+(ii-1)*klen];
+				     }
+				   }
+				   lastsz=kapp*kbox;
+				   strncat(all_cboxn,cboxn,kbox*64);*/
+				   free(cboxn);
+				   free(cboxu);
+	         free(kboxr);
+				   free(vals);
+	       }
+      }
+  }
+  
+  fclose(fp);
+/*  
+  free(bufr_message);
+
+  free(values);
+  free(all_vals);
+  free(all_kapp);
+  free(all_kbox);
+  free(all_klen);
+  free(cvals);
+  free(cnames);
+  free(cunits);
+  free(all_cboxn);
+  free(ktdexp);
+  free(ktdlst);
+ */     
+  return status;
+
+}
+
